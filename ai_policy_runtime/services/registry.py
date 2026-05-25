@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-from ai_policy_runtime.domain.pack import PackRegistry
+from ai_policy_runtime.domain.pack import PackRegistry, SkillPack
 from ai_policy_runtime.domain.rule import Rule
 from ai_policy_runtime.domain.skill import Skill
 from ai_policy_runtime.domain.task import TaskContext
 from ai_policy_runtime.infrastructure.conditions import ConditionError, evaluate_condition
 from ai_policy_runtime.infrastructure.loader import load_packs_from_dir, load_skills_from_dir
+
+
+VALID_ON_DUPLICATE = ("error", "first_wins", "last_wins")
 
 
 GENERIC_ACTIVATION_TAGS = frozenset(
@@ -82,6 +85,34 @@ class SkillRegistry:
             load_skills_from_dir(skills_path),
             PackRegistry(load_packs_from_dir(packs_path)),
         )
+
+    @classmethod
+    def from_dirs_multi(
+        cls,
+        skills_paths: Sequence[str | Path],
+        packs_paths: Sequence[str | Path],
+        *,
+        on_duplicate: str = "error",
+    ) -> "SkillRegistry":
+        """Build a registry from multiple skill/pack directories.
+
+        Earlier paths win in ``first_wins`` mode; later paths win in
+        ``last_wins`` mode; ``error`` raises on duplicate skill_id or pack_id.
+        """
+
+        if on_duplicate not in VALID_ON_DUPLICATE:
+            raise ValueError(
+                f"on_duplicate must be one of {VALID_ON_DUPLICATE}, got: {on_duplicate!r}"
+            )
+        skills = _merge_skills(
+            (load_skills_from_dir(path) for path in skills_paths),
+            on_duplicate=on_duplicate,
+        )
+        packs = _merge_packs(
+            (load_packs_from_dir(path) for path in packs_paths),
+            on_duplicate=on_duplicate,
+        )
+        return cls(skills, PackRegistry(packs))
 
     def register(self, skill: Skill) -> None:
         if skill.skill_id in self._skills:
@@ -223,6 +254,38 @@ def _pack_activation_allowed(task: TaskContext) -> bool:
     if task.domain != "general":
         return True
     return task.context.get("artifact_type") == "code" or bool(task.context.get("language"))
+
+
+def _merge_skills(
+    groups: Iterable[Iterable[Skill]], *, on_duplicate: str
+) -> list[Skill]:
+    merged: dict[str, Skill] = {}
+    for group in groups:
+        for skill in group:
+            if skill.skill_id not in merged:
+                merged[skill.skill_id] = skill
+                continue
+            if on_duplicate == "error":
+                raise ValueError(f"Duplicate skill_id: {skill.skill_id}")
+            if on_duplicate == "last_wins":
+                merged[skill.skill_id] = skill
+    return list(merged.values())
+
+
+def _merge_packs(
+    groups: Iterable[Iterable[SkillPack]], *, on_duplicate: str
+) -> list[SkillPack]:
+    merged: dict[str, SkillPack] = {}
+    for group in groups:
+        for pack in group:
+            if pack.pack_id not in merged:
+                merged[pack.pack_id] = pack
+                continue
+            if on_duplicate == "error":
+                raise ValueError(f"Duplicate pack_id: {pack.pack_id}")
+            if on_duplicate == "last_wins":
+                merged[pack.pack_id] = pack
+    return list(merged.values())
 
 
 class ActivationSet:

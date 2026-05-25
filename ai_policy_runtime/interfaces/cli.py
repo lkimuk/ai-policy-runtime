@@ -157,6 +157,24 @@ def _add_runtime_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--skills", default="skills", help="Skill directory relative to policy root.")
     parser.add_argument("--packs", default="packs", help="Pack directory relative to policy root.")
+    parser.add_argument(
+        "--extra-skills",
+        action="append",
+        default=[],
+        help="Additional skill directory (relative to policy root or absolute). Repeatable.",
+    )
+    parser.add_argument(
+        "--extra-packs",
+        action="append",
+        default=[],
+        help="Additional pack directory (relative to policy root or absolute). Repeatable.",
+    )
+    parser.add_argument(
+        "--on-duplicate",
+        choices=("error", "first_wins", "last_wins"),
+        default=None,
+        help="Behavior when the same skill_id/pack_id is loaded from multiple directories.",
+    )
 
 
 def _runtime_from_args(args: argparse.Namespace) -> PolicyRuntime:
@@ -169,6 +187,17 @@ def _runtime_from_args(args: argparse.Namespace) -> PolicyRuntime:
             or _optional_string(project_config.get("policyRoot")),
             skills_dir=getattr(args, "skills", "skills"),
             packs_dir=getattr(args, "packs", "packs"),
+            extra_skills_dirs=_combine_extra_dirs(
+                getattr(args, "extra_skills", []),
+                project_config.get("extraSkillsDirs"),
+            ),
+            extra_packs_dirs=_combine_extra_dirs(
+                getattr(args, "extra_packs", []),
+                project_config.get("extraPacksDirs"),
+            ),
+            on_duplicate=getattr(args, "on_duplicate", None)
+            or _optional_string(project_config.get("onDuplicate"))
+            or "error",
             embedding_provider=_project_embedding_provider(project_config),
             embedding_base_url=_optional_string(project_config.get("embeddingBaseUrl")),
             embedding_api_key=_optional_string(project_config.get("embeddingApiKey")),
@@ -176,6 +205,28 @@ def _runtime_from_args(args: argparse.Namespace) -> PolicyRuntime:
             embedding_timeout_seconds=_optional_float(project_config.get("embeddingTimeout")),
         )
     )
+
+
+def _combine_extra_dirs(
+    cli_values: list[str] | None, config_value: object
+) -> tuple[str, ...]:
+    """Merge CLI --extra-* (wins) with config arrays. Preserve order, dedupe."""
+
+    seen: dict[str, None] = {}
+    for value in cli_values or ():
+        text = str(value).strip()
+        if text:
+            seen.setdefault(text, None)
+    if isinstance(config_value, list):
+        for value in config_value:
+            text = str(value).strip()
+            if text:
+                seen.setdefault(text, None)
+    elif isinstance(config_value, str):
+        text = config_value.strip()
+        if text:
+            seen.setdefault(text, None)
+    return tuple(seen)
 
 
 def _read_project_config(path: Path) -> dict[str, Any]:

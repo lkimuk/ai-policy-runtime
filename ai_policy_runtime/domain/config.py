@@ -1,7 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
+
+
+VALID_ON_DUPLICATE = ("error", "first_wins", "last_wins")
 
 
 @dataclass(frozen=True)
@@ -12,6 +16,16 @@ class RuntimePaths:
     skills: Path
     packs: Path
     current: Path
+    extra_skills: tuple[Path, ...] = ()
+    extra_packs: tuple[Path, ...] = ()
+
+    @property
+    def all_skills(self) -> tuple[Path, ...]:
+        return (self.skills, *self.extra_skills)
+
+    @property
+    def all_packs(self) -> tuple[Path, ...]:
+        return (self.packs, *self.extra_packs)
 
 
 @dataclass(frozen=True)
@@ -33,7 +47,16 @@ class RuntimeConfig:
     policy_root: Path | None = None
     skills_dir: str = "skills"
     packs_dir: str = "packs"
-    embedding: EmbeddingConfig | None = None
+    extra_skills_dirs: tuple[str, ...] = ()
+    extra_packs_dirs: tuple[str, ...] = ()
+    on_duplicate: str = "error"
+    embedding: EmbeddingConfig | None = field(default=None)
+
+    def __post_init__(self) -> None:
+        if self.on_duplicate not in VALID_ON_DUPLICATE:
+            raise ValueError(
+                f"on_duplicate must be one of {VALID_ON_DUPLICATE}, got: {self.on_duplicate!r}"
+            )
 
     @property
     def paths(self) -> RuntimePaths:
@@ -44,6 +67,12 @@ class RuntimeConfig:
             skills=_resolve_policy_path(policy_root, self.skills_dir),
             packs=_resolve_policy_path(policy_root, self.packs_dir),
             current=root / ".policy" / "current",
+            extra_skills=tuple(
+                _resolve_policy_path(policy_root, value) for value in self.extra_skills_dirs
+            ),
+            extra_packs=tuple(
+                _resolve_policy_path(policy_root, value) for value in self.extra_packs_dirs
+            ),
         )
 
     @classmethod
@@ -54,6 +83,9 @@ class RuntimeConfig:
         policy_root: str | Path | None = None,
         skills_dir: str = "skills",
         packs_dir: str = "packs",
+        extra_skills_dirs: Sequence[str | Path] = (),
+        extra_packs_dirs: Sequence[str | Path] = (),
+        on_duplicate: str = "error",
         embedding_provider: str | None = None,
         embedding_base_url: str | None = None,
         embedding_api_key: str | None = None,
@@ -83,6 +115,9 @@ class RuntimeConfig:
             policy_root=Path(policy_root) if policy_root is not None else None,
             skills_dir=skills_dir,
             packs_dir=packs_dir,
+            extra_skills_dirs=tuple(str(item) for item in extra_skills_dirs),
+            extra_packs_dirs=tuple(str(item) for item in extra_packs_dirs),
+            on_duplicate=on_duplicate,
             embedding=embedding,
         )
 

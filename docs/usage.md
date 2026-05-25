@@ -246,6 +246,51 @@ ai-policy validate
 Validation combines bundled JSON Schema checks from `schemas/` with semantic
 runtime checks such as dependency and pack-reference validation.
 
+## Multiple Skill / Pack Directories
+
+The runtime can load skills and packs from the bundled directory plus any
+number of additional directories — useful for layering project-specific or
+team-specific policy on top of the default library without forking the
+repository.
+
+Pass extra directories on the command line (repeatable):
+
+```powershell
+ai-policy resolve "fix the deadlock" `
+    --extra-skills C:\team\policy\skills `
+    --extra-packs  C:\team\policy\packs
+```
+
+Or persist them in `.policy/config.json`:
+
+```json
+{
+  "extraSkillsDirs": ["custom/skills", "../shared-policy/skills"],
+  "extraPacksDirs":  ["custom/packs"],
+  "onDuplicate": "first_wins"
+}
+```
+
+Paths are resolved relative to the policy root (or absolute paths are honored
+as-is). The bundled `skills_dir` / `packs_dir` always loads first; extras are
+appended in the order given. CLI flags merge with the config arrays — CLI
+entries come first, then config entries, with duplicates removed.
+
+When the same `skill_id` (or `pack_id`) appears in more than one directory,
+`onDuplicate` controls the merge:
+
+| Value         | Behavior                                                        |
+| ------------- | --------------------------------------------------------------- |
+| `error`       | Raise on duplicate (default — preserves the strict behavior).   |
+| `first_wins`  | Keep the version loaded earliest; later duplicates are ignored. |
+| `last_wins`   | Replace earlier definitions with later ones.                    |
+
+Equivalent CLI flag: `--on-duplicate {error,first_wins,last_wins}`.
+
+Backward compatibility: if no extras and no `onDuplicate` are configured, the
+runtime behaves exactly as before — a single skills/packs directory with
+strict duplicate detection.
+
 ## Inject Effective Rules
 
 ```powershell

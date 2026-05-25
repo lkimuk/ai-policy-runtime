@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -35,29 +36,36 @@ class DslValidator:
         self._packs = packs or PackDslValidator()
 
     def validate_repository(
-        self, skills_dir: str | Path, packs_dir: str | Path
+        self,
+        skills_dir: str | Path | Sequence[str | Path],
+        packs_dir: str | Path | Sequence[str | Path],
     ) -> list[Diagnostic]:
         diagnostics: list[Diagnostic] = []
-        skills_path = Path(skills_dir)
-        packs_path = Path(packs_dir)
+        skills_paths = _normalize_paths(skills_dir)
+        packs_paths = _normalize_paths(packs_dir)
         skill_ids: set[str] = set()
 
-        for path in sorted(skills_path.rglob("*.skill.yaml")):
-            data = load_mapping(path)
-            diagnostics.extend(self._skills.validate(data, str(path)))
-            skill = data.get("skill", {})
-            if skill.get("id"):
-                skill_ids.add(str(skill["id"]))
+        for skills_path in skills_paths:
+            for path in sorted(skills_path.rglob("*.skill.yaml")):
+                data = load_mapping(path)
+                diagnostics.extend(self._skills.validate(data, str(path)))
+                skill = data.get("skill", {})
+                if skill.get("id"):
+                    skill_ids.add(str(skill["id"]))
 
-        diagnostics.extend(self._validate_dependencies(skills_path, skill_ids))
-        diagnostics.extend(self._packs.validate_files(packs_path))
-        diagnostics.extend(self._validate_packs(packs_path, skill_ids))
+        diagnostics.extend(self._validate_dependencies(skills_paths, skill_ids))
+        for packs_path in packs_paths:
+            diagnostics.extend(self._packs.validate_files(packs_path))
+        diagnostics.extend(self._validate_packs(packs_paths, skill_ids))
         return diagnostics
 
-    def _validate_dependencies(self, skills_path: Path, skill_ids: set[str]) -> list[Diagnostic]:
+    def _validate_dependencies(
+        self, skills_paths: Sequence[Path], skill_ids: set[str]
+    ) -> list[Diagnostic]:
         try:
             return [
                 Diagnostic("E005", f"Unresolved dependency: {dependency}", skill.skill_id)
+                for skills_path in skills_paths
                 for skill in load_skills_from_dir(skills_path)
                 for dependency in skill.dependencies
                 if dependency not in skill_ids
@@ -65,10 +73,14 @@ class DslValidator:
         except Exception as exc:
             return [Diagnostic("E000", f"Skill loading failed: {exc}")]
 
-    def _validate_packs(self, packs_path: Path, skill_ids: set[str]) -> list[Diagnostic]:
+    def _validate_packs(
+        self, packs_paths: Sequence[Path], skill_ids: set[str]
+    ) -> list[Diagnostic]:
         diagnostics: list[Diagnostic] = []
         try:
-            packs = load_packs_from_dir(packs_path)
+            packs = [
+                pack for packs_path in packs_paths for pack in load_packs_from_dir(packs_path)
+            ]
         except Exception as exc:
             return [Diagnostic("E000", f"Pack loading failed: {exc}")]
 
@@ -140,8 +152,19 @@ _DEFAULT_VALIDATOR = DslValidator()
 _EFFECTIVE_RULES_VALIDATOR = EffectiveRulesValidator()
 
 
-def validate_repository(skills_dir: str | Path, packs_dir: str | Path) -> list[Diagnostic]:
+def validate_repository(
+    skills_dir: str | Path | Sequence[str | Path],
+    packs_dir: str | Path | Sequence[str | Path],
+) -> list[Diagnostic]:
     return _DEFAULT_VALIDATOR.validate_repository(skills_dir, packs_dir)
+
+
+def _normalize_paths(
+    value: str | Path | Sequence[str | Path],
+) -> list[Path]:
+    if isinstance(value, (str, Path)):
+        return [Path(value)]
+    return [Path(item) for item in value]
 
 
 def validate_effective_rules_mapping(data: dict[str, Any], path: str = "") -> list[Diagnostic]:

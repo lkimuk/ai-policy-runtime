@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -64,6 +65,10 @@ class TaskLexicon:
 
     @classmethod
     def from_skills_dir(cls, path: str | Path) -> "TaskLexicon":
+        return cls.from_skills_dirs((path,))
+
+    @classmethod
+    def from_skills_dirs(cls, paths: Sequence[str | Path]) -> "TaskLexicon":
         loader = PolicyLoader()
         skill_profiles: list[SkillProfile] = []
         skill_rules: list[LexiconRule] = []
@@ -72,7 +77,7 @@ class TaskLexicon:
         context_rules: list[LexiconRule] = []
         trigger_capabilities: dict[str, set[str]] = {}
 
-        for file_path in _iter_skill_files(path):
+        for file_path in _iter_skill_files_multi(paths):
             document = SkillAnalysisDocument(loader.load_mapping(file_path), file_path)
             skill_profiles.append(document.skill_profile())
             if skill_rule := document.skill_rule():
@@ -288,6 +293,11 @@ def _iter_skill_files(path: str | Path) -> Iterable[Path]:
         for item in sorted(root.rglob("*"))
         if item.is_file() and item.name.endswith((".skill.yaml", ".skill.yml", ".skill.json"))
     )
+
+
+def _iter_skill_files_multi(paths: Sequence[str | Path]) -> Iterable[Path]:
+    for path in paths:
+        yield from _iter_skill_files(path)
 
 
 def _first(value: Any) -> Any:

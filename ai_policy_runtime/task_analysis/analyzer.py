@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from pathlib import Path
 
 from ai_policy_runtime.domain.config import EmbeddingConfig
@@ -37,9 +38,27 @@ class TaskAnalyzer:
     ) -> "TaskAnalyzer":
         """Build an analyzer whose deterministic rules come from Skill metadata."""
 
+        return cls.from_skills_dirs(
+            (path,),
+            embeddings=embeddings,
+            semantic=semantic,
+            cache_dir=cache_dir,
+        )
+
+    @classmethod
+    def from_skills_dirs(
+        cls,
+        paths: Sequence[str | Path],
+        *,
+        embeddings: EmbeddingProvider | None = None,
+        semantic: bool = True,
+        cache_dir: str | Path | None = None,
+    ) -> "TaskAnalyzer":
+        """Build an analyzer from multiple skill directories."""
+
         return cls(
             deterministic=build_extractor(
-                path,
+                paths,
                 embeddings,
                 semantic=semantic,
                 cache_dir=cache_dir,
@@ -53,7 +72,7 @@ class TaskAnalyzer:
 
 
 def build_extractor(
-    skills_dir: str | Path,
+    skills_dir: str | Path | Sequence[str | Path],
     embeddings: EmbeddingProvider | None = None,
     *,
     semantic: bool = True,
@@ -61,7 +80,12 @@ def build_extractor(
 ) -> DeterministicTaskExtractor:
     """Create the default task extractor with sensible runtime defaults."""
 
-    lexicon = TaskLexicon.from_skills_dir(skills_dir)
+    paths: Sequence[str | Path]
+    if isinstance(skills_dir, (str, Path)):
+        paths = (skills_dir,)
+    else:
+        paths = tuple(skills_dir)
+    lexicon = TaskLexicon.from_skills_dirs(paths)
     if not semantic:
         return DeterministicTaskExtractor(lexicon)
     provider = embeddings or default_embedding_provider()

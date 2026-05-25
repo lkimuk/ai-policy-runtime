@@ -117,7 +117,7 @@ class PolicyRuntime:
 
     def validate(self) -> list[Diagnostic]:
         paths = self.config.paths
-        return validate_repository(paths.skills, paths.packs)
+        return validate_repository(paths.all_skills, paths.all_packs)
 
     def resolve(self, task_text: str, pack_ids: tuple[str, ...] = ()) -> ResolveResult:
         project, analysis, effective_rules, contributing_skills = self._evaluate(
@@ -242,8 +242,8 @@ class PolicyRuntime:
             else None
         )
         embeddings = self._embedding_provider()
-        analysis = TaskAnalyzer.from_skills_dir(
-            paths.skills,
+        analysis = TaskAnalyzer.from_skills_dirs(
+            paths.all_skills,
             embeddings=embeddings,
             semantic=True,
             cache_dir=paths.root / ".policy" / "cache" / "semantic-index",
@@ -271,7 +271,11 @@ class PolicyRuntime:
         paths = self.config.paths
         project = self._analyze_project()
         analysis = self._analyze(task_text, project)
-        registry = SkillRegistry.from_dirs(paths.skills, paths.packs)
+        registry = SkillRegistry.from_dirs_multi(
+            paths.all_skills,
+            paths.all_packs,
+            on_duplicate=self.config.on_duplicate,
+        )
         effective_rules = PolicyEngine(registry).evaluate(analysis.task, pack_ids)
         contributing_skills = _contributing_skill_ids(effective_rules)
         return project, analysis, effective_rules, contributing_skills
@@ -308,7 +312,11 @@ class PolicyRuntime:
 
     def _supported_domains(self) -> set[str]:
         try:
-            registry = SkillRegistry.from_dirs(self.config.paths.skills, self.config.paths.packs)
+            registry = SkillRegistry.from_dirs_multi(
+                self.config.paths.all_skills,
+                self.config.paths.all_packs,
+                on_duplicate=self.config.on_duplicate,
+            )
         except Exception:
             return set()
         return {domain for skill in registry.all() for domain in skill.domains}

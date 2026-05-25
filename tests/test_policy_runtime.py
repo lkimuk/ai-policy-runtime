@@ -4841,5 +4841,227 @@ class PolicyRuntimeTests(unittest.TestCase):
         self.assertTrue(_has_statement_containing(effective, "target"))
 
 
+class MultipleSkillPathTests(unittest.TestCase):
+    """Tests for the extra skills/packs directory feature."""
+
+    def _write_skill(self, root: Path, skill_id: str, *, name: str | None = None) -> Path:
+        slug = skill_id.replace(".", "_")
+        path = root / f"{slug}.skill.yaml"
+        body = (
+            "kind: skill\n"
+            "api_version: policy.skill/v1\n"
+            "skill:\n"
+            f"  id: {skill_id}\n"
+            f"  name: {name or skill_id}\n"
+            "  version: 1.0.0\n"
+            "  status: stable\n"
+            "  level: domain\n"
+            "  domain: extras_test\n"
+            "  priority: 50\n"
+            "  activation:\n"
+            "    when: \"true\"\n"
+            "rules: {}\n"
+        )
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def _write_pack(self, root: Path, pack_id: str, includes: tuple[str, ...]) -> Path:
+        slug = pack_id.replace(".", "_")
+        path = root / f"{slug}.pack.yaml"
+        body = (
+            "kind: pack\n"
+            "api_version: policy.skill/v1\n"
+            "pack:\n"
+            f"  id: {pack_id}\n"
+            f"  name: {pack_id}\n"
+            "  version: 1.0.0\n"
+            "includes:\n"
+            + "".join(f"  - {item}\n" for item in includes)
+            + "excludes: []\n"
+            + "overrides: []\n"
+        )
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_default_config_is_backward_compatible(self) -> None:
+        """No extras → behavior identical to single-path constructor."""
+
+        config = RuntimeConfig.from_values(root=".")
+        self.assertEqual(config.extra_skills_dirs, ())
+        self.assertEqual(config.extra_packs_dirs, ())
+        self.assertEqual(config.on_duplicate, "error")
+        paths = config.paths
+        self.assertEqual(paths.extra_skills, ())
+        self.assertEqual(paths.extra_packs, ())
+        self.assertEqual(paths.all_skills, (paths.skills,))
+        self.assertEqual(paths.all_packs, (paths.packs,))
+
+    def test_runtime_paths_resolves_extras_relative_to_policy_root(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = RuntimeConfig.from_values(
+                root=root,
+                extra_skills_dirs=("custom/skills", str(root / "abs_skills")),
+                extra_packs_dirs=("custom/packs",),
+            )
+            paths = config.paths
+            self.assertEqual(paths.extra_skills[0], root / "custom" / "skills")
+            self.assertEqual(paths.extra_skills[1], root / "abs_skills")
+            self.assertEqual(paths.extra_packs[0], root / "custom" / "packs")
+            self.assertEqual(paths.all_skills[0], paths.skills)
+
+    def test_invalid_on_duplicate_raises(self) -> None:
+        with self.assertRaises(ValueError):
+            RuntimeConfig.from_values(root=".", on_duplicate="bogus")
+
+    def test_from_dirs_multi_merges_skills(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            extra = root / "extra"
+            primary.mkdir()
+            extra.mkdir()
+            self._write_skill(primary, "extras_test.alpha")
+            self._write_skill(extra, "extras_test.bravo")
+            registry = SkillRegistry.from_dirs_multi(
+                (primary, extra), (), on_duplicate="error"
+            )
+            ids = {skill.skill_id for skill in registry.all()}
+            self.assertEqual(ids, {"extras_test.alpha", "extras_test.bravo"})
+
+    def test_from_dirs_multi_merges_packs(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skills = root / "skills"
+            primary_packs = root / "packs"
+            extra_packs = root / "extra_packs"
+            skills.mkdir()
+            primary_packs.mkdir()
+            extra_packs.mkdir()
+            self._write_skill(skills, "extras_test.alpha")
+            self._write_pack(primary_packs, "primary.pack", ("extras_test.alpha",))
+            self._write_pack(extra_packs, "extra.pack", ("extras_test.alpha",))
+            registry = SkillRegistry.from_dirs_multi(
+                (skills,), (primary_packs, extra_packs), on_duplicate="error"
+            )
+            self.assertEqual({"primary.pack", "extra.pack"}, set(registry.packs._packs))
+
+    def test_duplicate_skill_id_default_errors(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            extra = root / "extra"
+            primary.mkdir()
+            extra.mkdir()
+            self._write_skill(primary, "extras_test.alpha", name="primary version")
+            self._write_skill(extra, "extras_test.alpha", name="extra version")
+            with self.assertRaises(ValueError):
+                SkillRegistry.from_dirs_multi(
+                    (primary, extra), (), on_duplicate="error"
+                )
+
+    def test_duplicate_skill_id_first_wins(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            extra = root / "extra"
+            primary.mkdir()
+            extra.mkdir()
+            self._write_skill(primary, "extras_test.alpha", name="primary version")
+            self._write_skill(extra, "extras_test.alpha", name="extra version")
+            registry = SkillRegistry.from_dirs_multi(
+                (primary, extra), (), on_duplicate="first_wins"
+            )
+            self.assertEqual(registry.get("extras_test.alpha").name, "primary version")
+
+    def test_duplicate_skill_id_last_wins(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "primary"
+            extra = root / "extra"
+            primary.mkdir()
+            extra.mkdir()
+            self._write_skill(primary, "extras_test.alpha", name="primary version")
+            self._write_skill(extra, "extras_test.alpha", name="extra version")
+            registry = SkillRegistry.from_dirs_multi(
+                (primary, extra), (), on_duplicate="last_wins"
+            )
+            self.assertEqual(registry.get("extras_test.alpha").name, "extra version")
+
+    def test_duplicate_pack_id_obeys_on_duplicate(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skills = root / "skills"
+            primary_packs = root / "packs"
+            extra_packs = root / "extra_packs"
+            skills.mkdir()
+            primary_packs.mkdir()
+            extra_packs.mkdir()
+            self._write_skill(skills, "extras_test.alpha")
+            self._write_pack(primary_packs, "shared.pack", ("extras_test.alpha",))
+            self._write_pack(extra_packs, "shared.pack", ("extras_test.alpha",))
+            with self.assertRaises(ValueError):
+                SkillRegistry.from_dirs_multi(
+                    (skills,), (primary_packs, extra_packs), on_duplicate="error"
+                )
+
+    def test_cli_args_populate_extras(self) -> None:
+        from ai_policy_runtime.interfaces.cli import _runtime_from_args
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "skills").mkdir()
+            (root / "packs").mkdir()
+            args = argparse.Namespace(
+                root=str(root),
+                policy_root=None,
+                skills="skills",
+                packs="packs",
+                extra_skills=["custom/skills"],
+                extra_packs=["custom/packs"],
+                on_duplicate="last_wins",
+            )
+            runtime = _runtime_from_args(args)
+            self.assertEqual(runtime.config.extra_skills_dirs, ("custom/skills",))
+            self.assertEqual(runtime.config.extra_packs_dirs, ("custom/packs",))
+            self.assertEqual(runtime.config.on_duplicate, "last_wins")
+
+    def test_cli_reads_extras_from_project_config(self) -> None:
+        from ai_policy_runtime.interfaces.cli import _runtime_from_args
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "skills").mkdir()
+            (root / "packs").mkdir()
+            (root / ".policy").mkdir()
+            (root / ".policy" / "config.json").write_text(
+                json.dumps(
+                    {
+                        "extraSkillsDirs": ["from_config/skills"],
+                        "extraPacksDirs": ["from_config/packs"],
+                        "onDuplicate": "first_wins",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                root=str(root),
+                policy_root=None,
+                skills="skills",
+                packs="packs",
+                extra_skills=[],
+                extra_packs=[],
+                on_duplicate=None,
+            )
+            runtime = _runtime_from_args(args)
+            self.assertEqual(
+                runtime.config.extra_skills_dirs, ("from_config/skills",)
+            )
+            self.assertEqual(
+                runtime.config.extra_packs_dirs, ("from_config/packs",)
+            )
+            self.assertEqual(runtime.config.on_duplicate, "first_wins")
+
+
 if __name__ == "__main__":
     unittest.main()
