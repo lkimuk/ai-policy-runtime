@@ -10,6 +10,14 @@ const PACKAGE_ROOT = path.resolve(__dirname, "..");
 const PYTHON_MODULE = "ai_policy_runtime.cli";
 const CLAUDE_CONFIGURE_SCRIPT = path.join(PACKAGE_ROOT, "tools", "configure_claude_desktop.py");
 const CODEX_CONFIGURE_SCRIPT = path.join(PACKAGE_ROOT, "tools", "configure_codex.py");
+const OPENCODE_CONFIGURE_SCRIPT = path.join(PACKAGE_ROOT, "tools", "configure_opencode.py");
+const CONFIGURE_SCRIPTS = {
+  claude: CLAUDE_CONFIGURE_SCRIPT,
+  "claude-desktop": CLAUDE_CONFIGURE_SCRIPT,
+  desktop: CLAUDE_CONFIGURE_SCRIPT,
+  codex: CODEX_CONFIGURE_SCRIPT,
+  opencode: OPENCODE_CONFIGURE_SCRIPT,
+};
 const MIN_PYTHON = [3, 10];
 
 function main(argv) {
@@ -61,25 +69,18 @@ function main(argv) {
 
 function configure(argv) {
   const [target, ...rest] = argv;
-  if (!target || target === "claude") {
-    return runClaudeConfigure(withDefaultRoot(rest));
-  }
-  if (target === "desktop" || target === "claude-desktop") {
-    return runClaudeConfigure(withDefaultRoot(rest));
-  }
-  if (target === "codex") {
-    return runCodexConfigure(withDefaultRoot(rest));
+  const normalized = target || "claude";
+  if (CONFIGURE_SCRIPTS[normalized]) {
+    return runConfigureScript(CONFIGURE_SCRIPTS[normalized], withDefaultRoot(rest));
   }
   fail(`Unknown configure target: ${target}`);
 }
 
 function status(argv) {
   const { agent, rest } = extractOptionValue(argv, "--agent");
-  if (agent === "codex") {
-    return runCodexConfigure(["--status", ...withDefaultRoot(rest)]);
-  }
-  if (!agent || agent === "claude") {
-    return runClaudeConfigure(["--status", ...withDefaultRoot(rest)]);
+  const normalized = agent || "claude";
+  if (CONFIGURE_SCRIPTS[normalized]) {
+    return runConfigureScript(CONFIGURE_SCRIPTS[normalized], ["--status", ...withDefaultRoot(rest)]);
   }
   fail(`Unknown status agent: ${agent}`);
 }
@@ -104,13 +105,12 @@ function postRefine(argv) {
 }
 
 function runClaudeConfigure(args) {
-  const normalized = addPluginRoot(args);
-  return runPython([CLAUDE_CONFIGURE_SCRIPT, ...normalized]);
+  return runConfigureScript(CLAUDE_CONFIGURE_SCRIPT, args);
 }
 
-function runCodexConfigure(args) {
+function runConfigureScript(script, args) {
   const normalized = addPluginRoot(args);
-  return runPython([CODEX_CONFIGURE_SCRIPT, ...normalized]);
+  return runPython([script, ...normalized]);
 }
 
 function withDefaultRoot(args) {
@@ -369,6 +369,7 @@ function doctor(argv = []) {
     pythonPackage: fs.existsSync(path.join(PACKAGE_ROOT, "ai_policy_runtime", "__init__.py")),
     codexPlugin: fs.existsSync(path.join(PACKAGE_ROOT, ".codex-plugin", "plugin.json")),
     codexHooks: fs.existsSync(path.join(PACKAGE_ROOT, "hooks", "codex-hooks.json")),
+    opencodeConfigure: fs.existsSync(path.join(PACKAGE_ROOT, "tools", "configure_opencode.py")),
     claudePlugin: fs.existsSync(path.join(PACKAGE_ROOT, ".claude-plugin", "plugin.json")),
     claudeHooks: fs.existsSync(path.join(PACKAGE_ROOT, "hooks", "hooks.json")),
     skills: fs.existsSync(path.join(PACKAGE_ROOT, "skills")),
@@ -470,6 +471,7 @@ function printHelp() {
 Usage:
   ai-policy configure claude [--root <project>]
   ai-policy configure codex [--root <project>]
+  ai-policy configure opencode [--root <project>]
   ai-policy embedding status [--root <project>]
   ai-policy embedding test [--root <project>]
   ai-policy embedding configure [--root <project>] --provider <auto|openai-compatible|local>
@@ -477,7 +479,7 @@ Usage:
                               [--base-url <url>] [--api-key <key>] [--timeout <seconds>]
   ai-policy model <list|install> [--policy-root <runtime-assets>] [--model <known-model>]
   ai-policy cleanup [--root <project>] [--keep-current]
-  ai-policy status [--agent <claude|codex>] [--root <project>]
+  ai-policy status [--agent <claude|codex|opencode>] [--root <project>]
   ai-policy disable [--root <project>]
   ai-policy plugin <enable|disable> [--root <project>]
   ai-policy post-refine <off|light|standard|strict> [--root <project>]
@@ -488,6 +490,7 @@ Usage:
 Examples:
   ai-policy configure claude --root D:\\work\\project
   ai-policy configure codex --root D:\\work\\project
+  ai-policy configure opencode --root D:\\work\\project
   ai-policy embedding configure --root D:\\work\\project --provider local --install
   ai-policy embedding configure --root D:\\work\\project --provider local --model D:\\models\\paraphrase-multilingual-MiniLM-L12-v2
   ai-policy model list --policy-root D:\\tools\\ai-policy-runtime

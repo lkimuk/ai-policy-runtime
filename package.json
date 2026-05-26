@@ -1,7 +1,7 @@
 {
   "name": "ai-policy-runtime",
   "version": "0.1.5",
-  "description": "Generate better AI code with task-aware policies for Codex and Claude Code.",
+  "description": "Generate better AI code with task-aware policies for Codex, Claude Code, and OpenCode.",
   "license": "Apache-2.0",
   "author": {
     "name": "Miles Li"
@@ -19,6 +19,7 @@
     "policy",
     "claude-code",
     "codex",
+    "opencode",
     "agent",
     "hooks",
     "developer-tools"
@@ -34,6 +35,7 @@
     "docs/assets/*.png",
     "docs/reference/**/*.yaml",
     "hooks/*.json",
+    "hooks/*.js",
     "hooks/*.py",
     "packs/*.yaml",
     "schemas/*.json",

@@ -4,7 +4,7 @@ include requirements.txt
 recursive-include skills *.yaml *.yml *.json
 recursive-include packs *.yaml *.yml *.json
 recursive-include schemas *.json
-recursive-include hooks *.py *.json
+recursive-include hooks *.py *.json *.js
 recursive-include .codex-plugin *.json
 recursive-include .claude-plugin *.json
 recursive-include tools *.py

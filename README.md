@@ -2,7 +2,7 @@
 
 # AI Policy Runtime
 
-Generate better AI code with task-aware policies for Codex and Claude Code.
+Generate better AI code with task-aware policies for Codex, Claude Code, and OpenCode.
 
 AI Policy Runtime gives your AI coding agent focused engineering rules for the
 task at hand. It can guide implementation, review, refactoring, API design,
@@ -53,7 +53,7 @@ Agent
 Work done
 ```
 
-1. The user sends a task to Codex or Claude Code.
+1. The user sends a task to Codex, Claude Code, or OpenCode.
 2. The runtime analyzes the task and builds structured context.
 3. Matching Skills, selected Packs, dependencies, and rule conditions are
    evaluated.
@@ -66,7 +66,7 @@ Work done
 ## What It Does
 
 - Detects the task type and applies focused coding rules.
-- Shares one workspace configuration across Codex and Claude Code.
+- Shares one workspace configuration across Codex, Claude Code, and OpenCode.
 - Uses embeddings for stronger multilingual task matching.
 - Can run a post-task refinement pass before the agent finishes.
 - Shows the exact Effective Rules used for the latest prompt.
@@ -82,7 +82,7 @@ general refinement packs are also included.
 Install the **AI Policy Runtime** extension, then open its side bar in your
 workspace.
 
-Use it with the Codex or Claude Code extension you already use. Enable the
+Use it with the Codex, Claude Code, or OpenCode extension you already use. Enable the
 runtime, select the agent, choose policy packs, and configure embeddings if you
 want semantic task matching.
 
@@ -113,10 +113,17 @@ Configure a project for Claude Code:
 ai-policy configure claude --root D:\work\project
 ```
 
+Configure a project for OpenCode:
+
+```powershell
+ai-policy configure opencode --root D:\work\project
+```
+
 After updating the npm package, rerun `ai-policy configure codex` or
-`ai-policy configure claude` for each workspace that should use the new
-runtime. The command refreshes `.policy/config.json` and agent hook paths to the
-current installed package.
+`ai-policy configure claude` or `ai-policy configure opencode` for each
+workspace that should use the new runtime. The command refreshes
+`.policy/config.json` and agent hook/plugin paths to the current installed
+package.
 
 ## Embeddings
 
@@ -167,9 +174,9 @@ resetting a project:
 ai-policy cleanup --root D:\work\project
 ```
 
-Cleanup removes AI Policy Codex/Claude integration entries, `.policy/config.json`,
-and generated `.policy/current` state. It keeps caches, local models, and
-unrelated agent settings.
+Cleanup removes AI Policy Codex/Claude/OpenCode integration entries,
+`.policy/config.json`, and generated `.policy/current` state. It keeps caches,
+local models, and unrelated agent settings.
 
 ## Common Commands
 
@@ -206,6 +213,7 @@ AI Policy Runtime stores transparent project state in workspace files:
 - `.policy/current/agent-hook-state.json`
 - `.codex/hooks.json` and `.codex/config.toml` when Codex is enabled
 - `.claude/settings.local.json` when Claude Code is enabled
+- `opencode.json` and `.opencode/plugins/ai-policy-runtime.js` when OpenCode is enabled
 
 These files make the active policy visible and reproducible. Review them before
 committing workspace-specific settings.

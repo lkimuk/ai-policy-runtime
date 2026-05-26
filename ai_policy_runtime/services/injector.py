@@ -5,6 +5,7 @@ from pathlib import Path
 
 BEGIN = "<!-- POLICY_RUNTIME_BEGIN -->"
 END = "<!-- POLICY_RUNTIME_END -->"
+AGENTS_MD_TARGETS = frozenset({"codex", "opencode"})
 
 
 def inject_current_prompt(root: str | Path, target: str) -> Path:
@@ -12,14 +13,7 @@ def inject_current_prompt(root: str | Path, target: str) -> Path:
     prompt_path = root_path / ".policy" / "current" / "effective-prompt.md"
     prompt = prompt_path.read_text(encoding="utf-8")
 
-    if target == "codex":
-        output = root_path / "AGENTS.md"
-    elif target == "claude":
-        output = root_path / "CLAUDE.md"
-    elif target == "custom":
-        output = root_path / ".policy" / "current" / "injected-prompt.md"
-    else:
-        raise ValueError(f"Unsupported injection target: {target}")
+    output = _target_prompt_path(root_path, target)
 
     block = f"{BEGIN}\n{prompt}\n{END}"
     if target == "custom":
@@ -35,14 +29,7 @@ def clear_injected_prompt(root: str | Path, target: str) -> Path | None:
     """Remove a previously injected policy block from an agent file."""
 
     root_path = Path(root)
-    if target == "codex":
-        output = root_path / "AGENTS.md"
-    elif target == "claude":
-        output = root_path / "CLAUDE.md"
-    elif target == "custom":
-        output = root_path / ".policy" / "current" / "injected-prompt.md"
-    else:
-        raise ValueError(f"Unsupported injection target: {target}")
+    output = _target_prompt_path(root_path, target)
 
     if not output.exists():
         return None
@@ -63,6 +50,16 @@ def _replace_block(text: str, block: str) -> str:
         end = text.index(END) + len(END)
         return text[:start].rstrip() + "\n\n" + block + "\n" + text[end:].lstrip()
     return text.rstrip() + "\n\n" + block + "\n"
+
+
+def _target_prompt_path(root: Path, target: str) -> Path:
+    if target in AGENTS_MD_TARGETS:
+        return root / "AGENTS.md"
+    if target == "claude":
+        return root / "CLAUDE.md"
+    if target == "custom":
+        return root / ".policy" / "current" / "injected-prompt.md"
+    raise ValueError(f"Unsupported injection target: {target}")
 
 
 def _remove_block(text: str) -> str:

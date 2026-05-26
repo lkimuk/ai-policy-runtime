@@ -121,7 +121,7 @@ def main() -> None:
     inject.add_argument("--root", default=".", help="Project root.")
     inject.add_argument(
         "--target",
-        choices=("codex", "claude", "custom"),
+        choices=("codex", "claude", "opencode", "custom"),
         default="codex",
         help="Injection target.",
     )
@@ -132,7 +132,7 @@ def main() -> None:
     run.add_argument("--pack", action="append", default=[], help="Pack id to expand.")
     run.add_argument(
         "--agent",
-        choices=("codex", "claude", "custom"),
+        choices=("codex", "claude", "opencode", "custom"),
         default="custom",
         help="Agent injection target.",
     )

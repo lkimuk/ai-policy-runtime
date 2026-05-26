@@ -57,6 +57,7 @@ for the installed package:
     "claudeHooks": true,
     "codexPlugin": true,
     "codexHooks": true,
+    "opencodeConfigure": true,
     "skills": true,
     "packs": true
   }
@@ -106,6 +107,12 @@ For Codex-specific policy status:
 
 ```powershell
 ai-policy status --agent codex --root D:\work\target-project
+```
+
+For OpenCode-specific policy status:
+
+```powershell
+ai-policy status --agent opencode --root D:\work\target-project
 ```
 
 ## Use Remote Embeddings
@@ -159,6 +166,43 @@ Disable only Codex in the shared policy:
 ai-policy configure codex --root D:\work\target-project --disable
 ```
 
+## Configure OpenCode
+
+Configure the shared project policy for OpenCode:
+
+```powershell
+ai-policy configure opencode --root D:\work\target-project
+```
+
+This writes:
+
+```text
+D:\work\target-project\.policy\config.json
+D:\work\target-project\opencode.json
+D:\work\target-project\.opencode\plugins\ai-policy-runtime.js
+```
+
+It enables the `opencode` agent, leaves packs empty when no packs are configured,
+records the installed NPM package as `policyRoot`, adds `AGENTS.md` to OpenCode
+instructions, and installs a project-local OpenCode plugin. Re-run the command
+after updating `ai-policy-runtime` so the plugin points at the current installed
+package.
+
+For post-refinement smoke tests, enable `postRefine` in `.policy/config.json`,
+run an OpenCode task, then inspect:
+
+```text
+D:\work\target-project\.policy\current\opencode-plugin-state.json
+D:\work\target-project\.policy\current\opencode-post-refine-prompt.md
+```
+
+Disable only OpenCode in the shared policy and remove AI Policy's OpenCode
+instruction/plugin entries:
+
+```powershell
+ai-policy configure opencode --root D:\work\target-project --disable
+```
+
 ## Toggle Runtime and Plugin
 
 Disable both the runtime and Claude plugin for a workspace:
@@ -190,8 +234,8 @@ workspace integration state:
 ai-policy cleanup --root D:\work\target-project
 ```
 
-Cleanup removes AI Policy entries from Codex and Claude settings, deletes
-`.policy/config.json`, and removes generated `.policy/current` state. It leaves
+Cleanup removes AI Policy entries from Codex, Claude, and OpenCode settings,
+deletes `.policy/config.json`, and removes generated `.policy/current` state. It leaves
 caches, local models, and unrelated agent settings in place. Use
 `--keep-current` if you want to preserve the generated current-state files for
 debugging.

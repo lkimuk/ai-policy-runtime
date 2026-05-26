@@ -9,10 +9,16 @@ from typing import Any
 CODEX_HOOKS_FILE = Path(".codex") / "hooks.json"
 CODEX_CONFIG_FILE = Path(".codex") / "config.toml"
 CLAUDE_SETTINGS_FILE = Path(".claude") / "settings.local.json"
+OPENCODE_CONFIG_FILE = Path("opencode.json")
+OPENCODE_PLUGIN_FILE = Path(".opencode") / "plugins" / "ai-policy-runtime.js"
+OPENCODE_PLUGIN_STATE_FILE = Path(".policy") / "current" / "opencode-plugin-state.json"
+OPENCODE_POST_REFINE_PROMPT_FILE = Path(".policy") / "current" / "opencode-post-refine-prompt.md"
+OPENCODE_INSTRUCTION = "AGENTS.md"
 POLICY_CONFIG_FILE = Path(".policy") / "config.json"
 POLICY_CURRENT_DIR = Path(".policy") / "current"
 CLAUDE_MARKETPLACE_NAME = "ai-policy-runtime"
 CLAUDE_PLUGIN_ID = "ai-policy-runtime@ai-policy-runtime"
+AI_POLICY_PLUGIN_MARKERS = ("ai-policy-runtime", "opencode-user-prompt-submit")
 
 
 def clean_workspace(root: str | Path, *, remove_current: bool = True) -> dict[str, Any]:
@@ -37,6 +43,10 @@ def clean_workspace(root: str | Path, *, remove_current: bool = True) -> dict[st
         disable_hooks=not codex_hooks_remain,
     )
     _clean_claude_settings(project_root / CLAUDE_SETTINGS_FILE, result)
+    _clean_opencode_config(project_root / OPENCODE_CONFIG_FILE, result)
+    _clean_opencode_plugin(project_root / OPENCODE_PLUGIN_FILE, result)
+    _remove_file(project_root / OPENCODE_PLUGIN_STATE_FILE, result)
+    _remove_file(project_root / OPENCODE_POST_REFINE_PROMPT_FILE, result)
     _remove_file(project_root / POLICY_CONFIG_FILE, result)
     if remove_current:
         _remove_dir(project_root / POLICY_CURRENT_DIR, result)
@@ -116,6 +126,29 @@ def _clean_claude_settings(path: Path, result: dict[str, Any]) -> None:
         result["skipped"].append(str(path))
 
 
+def _clean_opencode_config(path: Path, result: dict[str, Any]) -> None:
+    if not path.exists():
+        result["skipped"].append(str(path))
+        return
+    config = _read_json_object(path)
+    if not _remove_json_list_item(config, "instructions", OPENCODE_INSTRUCTION):
+        result["skipped"].append(str(path))
+        return
+    _write_json(path, config)
+    result["updated"].append(str(path))
+
+
+def _clean_opencode_plugin(path: Path, result: dict[str, Any]) -> None:
+    if not path.exists():
+        result["skipped"].append(str(path))
+        return
+    if not _is_ai_policy_opencode_plugin(path):
+        result["skipped"].append(str(path))
+        return
+    path.unlink()
+    result["removed"].append(str(path))
+
+
 def _remove_file(path: Path, result: dict[str, Any]) -> None:
     if path.exists():
         path.unlink()
@@ -166,6 +199,25 @@ def _is_ai_policy_hook_command(command: str) -> bool:
 
 def _has_codex_hook_entries(hooks: dict[str, object]) -> bool:
     return any(isinstance(value, list) and bool(value) for value in hooks.values())
+
+
+def _is_ai_policy_opencode_plugin(path: Path) -> bool:
+    text = path.read_text(encoding="utf-8")
+    return all(marker in text for marker in AI_POLICY_PLUGIN_MARKERS)
+
+
+def _remove_json_list_item(config: dict[str, Any], key: str, item: str) -> bool:
+    value = config.get(key)
+    if not isinstance(value, list):
+        return False
+    kept = [current for current in value if str(current).strip() != item]
+    if len(kept) == len(value):
+        return False
+    if kept:
+        config[key] = kept
+    else:
+        config.pop(key, None)
+    return True
 
 
 def _remove_toml_keys(text: str, section: str, keys: tuple[str, ...]) -> str:

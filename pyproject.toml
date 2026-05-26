@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "ai-policy-runtime"
 version = "0.1.5"
-description = "Skill DSL and policy runtime for AI agents."
+description = "Skill DSL and policy runtime for Codex, Claude Code, OpenCode, and other AI agents."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -28,6 +28,7 @@ dev = [
 ai-policy-runtime = "ai_policy_runtime.interfaces.cli:main"
 policy-codex = "ai_policy_runtime.interfaces.codex:main"
 policy-claude = "ai_policy_runtime.interfaces.claude:main"
+policy-opencode = "ai_policy_runtime.interfaces.opencode:main"
 
 [tool.setuptools.packages.find]
 include = ["ai_policy_runtime*"]

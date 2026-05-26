@@ -297,10 +297,11 @@ strict duplicate detection.
 ai-policy inject --target custom
 ai-policy inject --target codex
 ai-policy inject --target claude
+ai-policy inject --target opencode
 ```
 
-`codex` updates the generated block in `AGENTS.md`; `claude` updates
-`CLAUDE.md`; `custom` writes `.policy/current/injected-prompt.md`.
+`codex` and `opencode` update the generated block in `AGENTS.md`; `claude`
+updates `CLAUDE.md`; `custom` writes `.policy/current/injected-prompt.md`.
 
 ## Run Codex with Effective Rules
 
@@ -356,6 +357,50 @@ Pass Codex CLI options before the task with repeated `--codex-arg`:
 ```powershell
 policy-codex --pack cpp.low_latency --codex-arg "--approval-mode" --codex-arg "never" "帮我写一个 C++20 低延迟队列"
 ```
+
+## Run OpenCode with Effective Rules
+
+Use `policy-opencode` when installed as a package:
+
+```powershell
+policy-opencode --pack cpp.low_latency "帮我写一个 C++20 低延迟队列"
+```
+
+The wrapper performs:
+
+```text
+resolve -> inject AGENTS.md -> opencode run "<task>"
+```
+
+Pass OpenCode CLI options before the task with repeated `--opencode-arg`:
+
+```powershell
+policy-opencode --pack cpp.low_latency --opencode-arg "--model" --opencode-arg "anthropic/claude-sonnet-4" "帮我写一个 C++20 低延迟队列"
+```
+
+Configure a project for normal OpenCode usage:
+
+```powershell
+ai-policy configure opencode --root D:\work\target-project
+ai-policy status --agent opencode --root D:\work\target-project
+```
+
+This enables the `opencode` agent in `.policy/config.json`, records the
+installed package as `policyRoot`, adds `AGENTS.md` to `opencode.json`
+instructions, and installs `.opencode/plugins/ai-policy-runtime.js`. OpenCode's
+plugin API is event-based; the plugin dynamically injects Effective Rules when a
+prompt event exposes prompt text and otherwise falls back to `AGENTS.md`.
+
+When `postRefine` is enabled, the OpenCode plugin prepares a continuation prompt
+on `session.idle` and writes release-testable state under:
+
+```text
+.policy/current/opencode-plugin-state.json
+.policy/current/opencode-post-refine-prompt.md
+```
+
+Use `ai-policy status --agent opencode --root <project>` to check whether these
+files were produced during a manual OpenCode session.
 
 ## Use as a Codex Plugin
 
@@ -453,9 +498,9 @@ This is the preferred control surface for editor integrations:
 }
 ```
 
-Use `"agents": ["codex", "claude"]` when the same workspace should be active for
-both Codex and Claude Code. Project embedding settings take precedence when
-present so editor-saved provider choices are stable. Environment variables can
+Use `"agents": ["codex", "claude", "opencode"]` when the same workspace should
+be active for multiple supported agent integrations. Project embedding settings
+take precedence when present so editor-saved provider choices are stable. Environment variables can
 still override workspace-independent controls such as `AI_POLICY_ROOT`,
 `AI_POLICY_PACKS`, and `AI_POLICY_VERIFY_TARGET`.
 
@@ -474,7 +519,7 @@ vscode-extension/
 ```
 
 The extension does not reimplement the runtime. It writes `.policy/config.json`
-for the current workspace and lets Codex / Claude Code integrations inject
+for the current workspace and lets Codex, Claude Code, and OpenCode integrations inject
 Effective Rules on each prompt. The configuration view includes target-agent
 selection and a one-click Post-refinement switch that enables the `Stop`
 continuation workflow by writing `postRefine` and `postRefinePacks`.
@@ -623,7 +668,8 @@ Enable Claude Code in the workspace config:
 ```
 
 Use `"agents": ["codex", "claude"]` when the same workspace should be active
-for both supported plugin integrations.
+for both supported plugin integrations, or include `"opencode"` for OpenCode
+workspaces.
 
 ## Use with Claude for Windows
 

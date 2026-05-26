@@ -18,7 +18,7 @@ FALSE_VALUES = {"0", "false", "no", "off"}
 POST_REFINE_PACK_ID = "generic.production_refinement"
 POST_REFINE_MODES = {"off", "light", "standard", "strict"}
 DEFAULT_AGENT = "codex"
-SUPPORTED_AGENTS = {"codex", "claude"}
+SUPPORTED_AGENTS = {"codex", "claude", "opencode"}
 
 
 def _normalize_embedding_provider(value: str | None) -> str:

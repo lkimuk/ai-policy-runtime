@@ -31,11 +31,13 @@ from ai_policy_runtime.task_analysis.semantic_index import SemanticTaskIndex
 from ai_policy_runtime.adapters.agent import build_post_refinement_task, merge_pack_ids
 from ai_policy_runtime.adapters.codex.wrapper import _build_codex_command
 from ai_policy_runtime.adapters.claude.wrapper import _build_claude_command
+from ai_policy_runtime.adapters.opencode.wrapper import _build_opencode_command
 from ai_policy_runtime.interfaces.cli import CommandDispatcher, _runtime_from_args
 from ai_policy_runtime.services.project_context import (
     ProjectContextAnalyzer,
     merge_project_analysis,
 )
+import ai_policy_runtime.services.analyzer as analyzer_service
 from ai_policy_runtime.services.analyzer import analyze
 from ai_policy_runtime.services.effective_rules import EffectiveRulesRenderer
 from ai_policy_runtime.services.engine import PolicyConflictError
@@ -67,6 +69,13 @@ from tools.configure_codex import (
     configure_policy as configure_codex_policy,
     main as configure_codex_main,
     status as codex_status,
+)
+from tools.configure_opencode import (
+    configure_opencode_config,
+    configure_opencode_plugin,
+    configure_policy as configure_opencode_policy,
+    main as configure_opencode_main,
+    status as opencode_status,
 )
 
 
@@ -163,11 +172,12 @@ def _git_prepare_commit_analysis() -> TaskAnalysis:
     )
 
 
-class KeywordConceptEmbeddingProvider:
-    """Small deterministic embedding provider for semantic-index tests."""
+class FakeEmbeddingProvider:
+    """Test-only deterministic embedding provider for semantic-index tests."""
+
+    model_name = "fake-embedding-provider-v3"
 
     _CONCEPTS = (
-        ("cpp", ("c++", "cpp", "native code")),
         ("write", ("写", "create", "generate", "implementation", "build")),
         ("latency", ("尾延迟", "latency", "延迟", "hot path", "critical path")),
         ("allocation", ("分配", "allocation", "blocking", "阻塞", "unbounded")),
@@ -234,6 +244,48 @@ class KeywordConceptEmbeddingProvider:
             ),
         ),
         (
+            "read_only_string",
+            (
+                "read-only string",
+                "string parameter",
+                "string-like input",
+                "std::string_view",
+                "string_view",
+            ),
+        ),
+        (
+            "contiguous_range",
+            (
+                "contiguous range",
+                "non-owning contiguous range",
+                "non-owning range",
+                "range of orders",
+                "std::span",
+                "span",
+                "连续范围",
+            ),
+        ),
+        (
+            "ownership",
+            (
+                "ownership",
+                "owned resource",
+            ),
+        ),
+        (
+            "takes_ownership",
+            (
+                "takes ownership",
+                "resource ownership",
+            ),
+        ),
+        (
+            "resource",
+            (
+                "resource",
+            ),
+        ),
+        (
             "grouping",
             (
                 "scattered helpers",
@@ -269,14 +321,6 @@ class KeywordConceptEmbeddingProvider:
                 "清晰直接",
                 "language-native",
                 "boilerplate",
-            ),
-        ),
-        (
-            "git",
-            (
-                "git",
-                "version control",
-                "source control",
             ),
         ),
         (
@@ -353,6 +397,16 @@ class KeywordConceptEmbeddingProvider:
             ),
         ),
         (
+            "git_branch_name",
+            (
+                "short branch names",
+                "branch names",
+                "review branch",
+                "git branch",
+                "pull request branch",
+            ),
+        ),
+        (
             "git_stash_clean",
             (
                 "stash",
@@ -382,18 +436,8 @@ class KeywordConceptEmbeddingProvider:
                 "不要修改",
                 "只解释",
                 "先不要修改代码",
-            ),
-        ),
-        (
-            "cmake",
-            (
-                "cmake",
-                "cmakelists",
-                "cmakelists.txt",
-                "build system",
-                "cmakepresets",
-                "ctest",
-                "构建系统",
+                "输出效果是正确的吗",
+                "is this output correct",
             ),
         ),
         (
@@ -470,6 +514,7 @@ class KeywordConceptEmbeddingProvider:
             "cmake_repro",
             (
                 "cmake preset",
+                "presets",
                 "cmakepresets",
                 "cmakepresets.json",
                 "configure preset",
@@ -494,14 +539,6 @@ class KeywordConceptEmbeddingProvider:
                 "clang-tidy",
                 "cppcheck",
                 "测试",
-            ),
-        ),
-        (
-            "python",
-            (
-                "pythonic",
-                "python best practices",
-                "python 最佳实践",
             ),
         ),
         (
@@ -675,7 +712,7 @@ def _concept_token_matches(text: str, token: str) -> bool:
     return normalized in text
 
 
-class CountingEmbeddingProvider(KeywordConceptEmbeddingProvider):
+class CountingEmbeddingProvider(FakeEmbeddingProvider):
     def __init__(self) -> None:
         self.calls = 0
 
@@ -737,6 +774,30 @@ class AlwaysViolationVerifier:
 
 
 class PolicyRuntimeTests(unittest.TestCase):
+    _REAL_EMBEDDING_PROVIDER_TESTS = {
+        "test_hashing_embedding_provider_is_not_supported",
+        "test_runtime_uses_openai_compatible_embedding_provider_when_configured",
+        "test_python_runtime_accepts_embedding_provider_config",
+        "test_runtime_requires_embedding_provider_when_no_local_model_exists",
+    }
+
+    def setUp(self) -> None:
+        analyzer_service._DEFAULT_ANALYZER = None
+        self.addCleanup(self._reset_default_analyzer)
+        if self._testMethodName in self._REAL_EMBEDDING_PROVIDER_TESTS:
+            return
+        for target in (
+            "ai_policy_runtime.task_analysis.analyzer.default_embedding_provider",
+            "ai_policy_runtime.application.runtime.default_embedding_provider",
+        ):
+            patcher = patch(target, return_value=FakeEmbeddingProvider())
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _reset_default_analyzer() -> None:
+        analyzer_service._DEFAULT_ANALYZER = None
+
     def test_task_analyzer_understands_cpp20_low_latency_queue(self) -> None:
         analysis = analyze("帮我写一个 C++20 低延迟队列")
         task = analysis.task
@@ -798,7 +859,7 @@ class PolicyRuntimeTests(unittest.TestCase):
     def test_task_analyzer_uses_embedding_semantics_for_rephrased_intent(self) -> None:
         analyzer = TaskAnalyzer.from_skills_dir(
             "skills",
-            embeddings=KeywordConceptEmbeddingProvider(),
+            embeddings=FakeEmbeddingProvider(),
         )
 
         analysis = analyzer.analyze("写一个 C++20 数据通道，主循环里不能有分配和阻塞，尾延迟要稳")
@@ -817,7 +878,7 @@ class PolicyRuntimeTests(unittest.TestCase):
     def test_task_analyzer_bootstraps_generic_refinement_from_semantics(self) -> None:
         analyzer = TaskAnalyzer.from_skills_dir(
             "skills",
-            embeddings=KeywordConceptEmbeddingProvider(),
+            embeddings=FakeEmbeddingProvider(),
         )
 
         analysis = analyzer.analyze(
@@ -850,7 +911,7 @@ class PolicyRuntimeTests(unittest.TestCase):
     def test_semantic_recall_quality_eval_set(self) -> None:
         analyzer = TaskAnalyzer.from_skills_dir(
             "skills",
-            embeddings=KeywordConceptEmbeddingProvider(),
+            embeddings=FakeEmbeddingProvider(),
         )
         fixture = _load_fixture("semantic_recall_eval.yaml")
 
@@ -893,7 +954,7 @@ class PolicyRuntimeTests(unittest.TestCase):
     def test_python_semantic_recall_quality_eval_set(self) -> None:
         analyzer = TaskAnalyzer.from_skills_dir(
             "skills",
-            embeddings=KeywordConceptEmbeddingProvider(),
+            embeddings=FakeEmbeddingProvider(),
         )
         fixture = _load_fixture("python_semantic_recall_eval.yaml")
 
@@ -932,7 +993,7 @@ class PolicyRuntimeTests(unittest.TestCase):
     def test_task_analyzer_understands_chinese_commit_request(self) -> None:
         analyzer = TaskAnalyzer.from_skills_dir(
             "skills",
-            embeddings=KeywordConceptEmbeddingProvider(),
+            embeddings=FakeEmbeddingProvider(),
         )
         task = analyzer.analyze(
             "提交一次代码",
@@ -946,7 +1007,7 @@ class PolicyRuntimeTests(unittest.TestCase):
     def test_task_analyzer_understands_chinese_commit_request_with_suffix(self) -> None:
         analyzer = TaskAnalyzer.from_skills_dir(
             "skills",
-            embeddings=KeywordConceptEmbeddingProvider(),
+            embeddings=FakeEmbeddingProvider(),
         )
         task = analyzer.analyze(
             "提交一次代码试试",
@@ -1240,7 +1301,9 @@ class PolicyRuntimeTests(unittest.TestCase):
 
         self.assertIn("Check that the branch contains only relevant commits", prompt)
         self.assertIn("Make the pull request title follow", prompt)
-        self.assertIn("Use short branch names", prompt)
+        self.assertTrue(
+            _has_statement_containing(result.structured["effective_rules"], "Use short branch names")
+        )
 
     def test_cmake_best_practices_pack_outputs_target_rules(self) -> None:
         runtime = PolicyRuntime(RuntimeConfig.from_values(root=".", policy_root="."))
@@ -1341,7 +1404,7 @@ class PolicyRuntimeTests(unittest.TestCase):
                 ),
             )
         )
-        index = SemanticTaskIndex(lexicon, KeywordConceptEmbeddingProvider(), threshold=0.1)
+        index = SemanticTaskIndex(lexicon, FakeEmbeddingProvider(), threshold=0.1)
 
         matches = index.search_scoped(
             "尾延迟要稳定",
@@ -2278,6 +2341,49 @@ class PolicyRuntimeTests(unittest.TestCase):
         self.assertNotIn(BEGIN, text)
         self.assertNotIn(END, text)
 
+    def test_opencode_injects_and_clears_agents_policy_block(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current = root / ".policy" / "current"
+            current.mkdir(parents=True)
+            (current / "effective-prompt.md").write_text("HARD:\n- OpenCode rule\n", encoding="utf-8")
+            agents = root / "AGENTS.md"
+            agents.write_text("# Manual\n\nKeep me.\n", encoding="utf-8")
+
+            injected = inject_current_prompt(root, "opencode")
+            clear_injected_prompt(root, "opencode")
+            text = agents.read_text(encoding="utf-8")
+
+        self.assertEqual(injected, agents)
+        self.assertIn("Keep me.", text)
+        self.assertNotIn("OpenCode rule", text)
+        self.assertNotIn(BEGIN, text)
+        self.assertNotIn(END, text)
+
+    def test_cli_inject_supports_opencode_target(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            current = root / ".policy" / "current"
+            current.mkdir(parents=True)
+            (current / "effective-prompt.md").write_text("HARD:\n- OpenCode\n", encoding="utf-8")
+
+            output, exit_code = CommandDispatcher().dispatch(
+                argparse.Namespace(
+                    command="inject",
+                    root=str(root),
+                    policy_root=None,
+                    skills="skills",
+                    packs="packs",
+                    target="opencode",
+                )
+            )
+
+            agents = (root / "AGENTS.md").read_text(encoding="utf-8")
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output["target"], "opencode")
+        self.assertIn("- OpenCode", agents)
+
     def test_codex_hook_reads_project_config_packs(self) -> None:
         config = {"packs": ["cpp.safe_generation", "cpp.low_latency"]}
         with patch.dict(os.environ, {}, clear=True):
@@ -2308,6 +2414,13 @@ class PolicyRuntimeTests(unittest.TestCase):
 
         self.assertFalse(user_prompt_submit._enabled_for(config, "codex"))
         self.assertTrue(user_prompt_submit._enabled_for(config, "claude"))
+        self.assertFalse(user_prompt_submit._enabled_for(config, "opencode"))
+
+    def test_hook_config_supports_opencode_agent(self) -> None:
+        config = {"enabled": True, "agents": ["opencode"]}
+
+        self.assertFalse(user_prompt_submit._enabled_for(config, "codex"))
+        self.assertTrue(user_prompt_submit._enabled_for(config, "opencode"))
 
     def test_hook_local_provider_bootstraps_semantic_dependencies(self) -> None:
         config = user_prompt_submit.ProjectHookConfig.from_mapping(
@@ -2315,10 +2428,13 @@ class PolicyRuntimeTests(unittest.TestCase):
         )
 
         with patch.dict(os.environ, {}, clear=True), patch(
-            "builtins.__import__",
-            side_effect=ModuleNotFoundError("sentence_transformers"),
-        ), patch("hooks.user_prompt_submit._bootstrap_package") as bootstrap:
-            config.ensure_semantic_dependencies(Path.cwd())
+            "hooks.user_prompt_submit._bootstrap_package"
+        ) as bootstrap:
+            with patch(
+                "builtins.__import__",
+                side_effect=ModuleNotFoundError("sentence_transformers"),
+            ):
+                config.ensure_semantic_dependencies(Path.cwd())
 
         bootstrap.assert_called_once_with(semantic=True)
 
@@ -2333,10 +2449,13 @@ class PolicyRuntimeTests(unittest.TestCase):
             )
 
             with patch.dict(os.environ, {}, clear=True), patch(
-                "builtins.__import__",
-                side_effect=ModuleNotFoundError("sentence_transformers"),
-            ), patch("hooks.user_prompt_submit._bootstrap_package") as bootstrap:
-                config.ensure_semantic_dependencies(root)
+                "hooks.user_prompt_submit._bootstrap_package"
+            ) as bootstrap:
+                with patch(
+                    "builtins.__import__",
+                    side_effect=ModuleNotFoundError("sentence_transformers"),
+                ):
+                    config.ensure_semantic_dependencies(root)
 
         bootstrap.assert_called_once_with(semantic=True)
 
@@ -2891,7 +3010,7 @@ class PolicyRuntimeTests(unittest.TestCase):
 
             with patch(
                 "ai_policy_runtime.application.runtime.default_embedding_provider",
-                return_value=KeywordConceptEmbeddingProvider(),
+                return_value=FakeEmbeddingProvider(),
             ):
                 result = runtime.resolve_if_applicable(
                     "请检查当前项目，并说明 AI Policy Runtime 是否通过 Claude Code plugin 启用了。",
@@ -3091,6 +3210,24 @@ class PolicyRuntimeTests(unittest.TestCase):
             (
                 "claude",
                 "--dangerously-skip-permissions",
+                "帮我写一个 C++20 低延迟队列",
+            ),
+        )
+
+    def test_opencode_wrapper_builds_command_with_task_last(self) -> None:
+        command = _build_opencode_command(
+            ("opencode", "run"),
+            ("--model", "anthropic/claude-sonnet-4"),
+            "帮我写一个 C++20 低延迟队列",
+        )
+
+        self.assertEqual(
+            command,
+            (
+                "opencode",
+                "run",
+                "--model",
+                "anthropic/claude-sonnet-4",
                 "帮我写一个 C++20 低延迟队列",
             ),
         )
@@ -3592,6 +3729,103 @@ class PolicyRuntimeTests(unittest.TestCase):
         self.assertIn("UserPromptSubmit", hooks["hooks"])
         self.assertIn("hooks = true", codex_config)
 
+    def test_configure_opencode_writes_policy_and_config(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            plugin_root = Path.cwd()
+
+            policy_path = configure_opencode_policy(root, plugin_root)
+            config_path = configure_opencode_config(root)
+            plugin_path = configure_opencode_plugin(root, plugin_root)
+            policy = json.loads(policy_path.read_text(encoding="utf-8"))
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            plugin = plugin_path.read_text(encoding="utf-8")
+
+        self.assertTrue(policy["enabled"])
+        self.assertEqual(policy["agents"], ["opencode"])
+        self.assertEqual(policy["packs"], [])
+        self.assertEqual(policy["policyRoot"], str(plugin_root))
+        self.assertEqual(policy["git"], {"commitStyle": "auto"})
+        self.assertEqual(config["$schema"], "https://opencode.ai/config.json")
+        self.assertEqual(config["instructions"], ["AGENTS.md"])
+        self.assertIn("opencode-user-prompt-submit", plugin)
+        self.assertIn("opencode-plugin-state.json", plugin)
+        self.assertIn("opencode-post-refine-prompt.md", plugin)
+        self.assertIn(str(plugin_root).replace("\\", "\\\\"), plugin)
+
+    def test_configure_opencode_preserves_existing_instructions(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            config = root / "opencode.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                json.dumps({"instructions": ["README.md"], "model": "anthropic/claude"}),
+                encoding="utf-8",
+            )
+
+            config_path = configure_opencode_config(root)
+            current = json.loads(config_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(current["instructions"], ["README.md", "AGENTS.md"])
+        self.assertEqual(current["model"], "anthropic/claude")
+
+    def test_configure_opencode_disable_preserves_other_agents(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            policy = root / ".policy"
+            policy.mkdir(parents=True)
+            (policy / "config.json").write_text(
+                json.dumps({"enabled": True, "agents": ["opencode", "codex"]}),
+                encoding="utf-8",
+            )
+
+            policy_path = configure_opencode_policy(root, Path.cwd(), enabled=False)
+            current = json.loads(policy_path.read_text(encoding="utf-8"))
+
+        self.assertTrue(current["enabled"])
+        self.assertEqual(current["agents"], ["codex"])
+
+    def test_configure_opencode_status_reports_current_features(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            plugin_root = Path.cwd()
+            configure_opencode_policy(root, plugin_root)
+            configure_opencode_config(root)
+            configure_opencode_plugin(root, plugin_root)
+
+            current = opencode_status(root, plugin_root)
+
+        self.assertTrue(current["runtime_enabled"])
+        self.assertTrue(current["opencode_agent_enabled"])
+        self.assertTrue(current["opencode_config_present"])
+        self.assertTrue(current["agents_instruction_configured"])
+        self.assertTrue(current["project_plugin_present"])
+        self.assertTrue(current["project_plugin_configured"])
+        self.assertFalse(current["project_plugin_state_present"])
+        self.assertFalse(current["project_post_refine_prompt_present"])
+        self.assertTrue(current["project_plugin_runtime_root_matches_expected"])
+        self.assertTrue(current["policy_root_matches_expected"])
+        self.assertEqual(current["git_commit_style"], "auto")
+
+    def test_configure_opencode_cli_updates_policy_and_config(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+
+            with patch("sys.stdout", new=io.StringIO()):
+                exit_code = configure_opencode_main(["--root", str(root)])
+
+            policy = json.loads(
+                (root / ".policy" / "config.json").read_text(encoding="utf-8")
+            )
+            config = json.loads((root / "opencode.json").read_text(encoding="utf-8"))
+            plugin = root / ".opencode" / "plugins" / "ai-policy-runtime.js"
+            plugin_exists = plugin.exists()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(policy["agents"], ["opencode"])
+        self.assertEqual(config["instructions"], ["AGENTS.md"])
+        self.assertTrue(plugin_exists)
+
     def test_clean_workspace_removes_only_ai_policy_entries(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / "project"
@@ -3599,10 +3833,16 @@ class PolicyRuntimeTests(unittest.TestCase):
             configure_codex_policy(root, plugin_root)
             hooks_path = configure_codex_hooks(root, plugin_root)
             codex_config = configure_codex_config(root)
+            opencode_config = configure_opencode_config(root)
+            opencode_plugin = configure_opencode_plugin(root, plugin_root)
             claude_settings = configure_claude_settings(root, plugin_root, "local")
             current = root / ".policy" / "current"
             current.mkdir(parents=True)
             (current / "agent-hook-state.json").write_text("{}", encoding="utf-8")
+            opencode_state = current / "opencode-plugin-state.json"
+            opencode_state.write_text("{}", encoding="utf-8")
+            opencode_prompt = current / "opencode-post-refine-prompt.md"
+            opencode_prompt.write_text("Refine once.\n", encoding="utf-8")
 
             hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
             hooks["hooks"]["Stop"].append(
@@ -3613,16 +3853,21 @@ class PolicyRuntimeTests(unittest.TestCase):
             result = clean_workspace(root)
             cleaned_hooks = json.loads(hooks_path.read_text(encoding="utf-8"))
             cleaned_codex_config = codex_config.read_text(encoding="utf-8")
+            cleaned_opencode = json.loads(opencode_config.read_text(encoding="utf-8"))
             cleaned_claude = json.loads(claude_settings.read_text(encoding="utf-8"))
 
         self.assertIn(str(root / ".policy" / "config.json"), result["removed"])
         self.assertIn(str(root / ".policy" / "current"), result["removed"])
+        self.assertIn(str(opencode_state), result["removed"])
+        self.assertIn(str(opencode_prompt), result["removed"])
+        self.assertIn(str(opencode_plugin), result["removed"])
         self.assertNotIn("UserPromptSubmit", cleaned_hooks["hooks"])
         self.assertEqual(
             cleaned_hooks["hooks"]["Stop"][0]["hooks"][0]["command"],
             "echo keep",
         )
         self.assertIn("hooks = true", cleaned_codex_config)
+        self.assertNotIn("instructions", cleaned_opencode)
         self.assertNotIn(PLUGIN_ID, cleaned_claude.get("enabledPlugins", {}))
         self.assertNotIn("ai-policy-runtime", cleaned_claude.get("extraKnownMarketplaces", {}))
 
@@ -3668,6 +3913,7 @@ class PolicyRuntimeTests(unittest.TestCase):
         self.assertIn(".codex-plugin/*.json", package["files"])
         self.assertIn(".claude-plugin/*.json", package["files"])
         self.assertIn("hooks/*.json", package["files"])
+        self.assertIn("hooks/*.js", package["files"])
         self.assertIn("hooks/*.py", package["files"])
         self.assertIn("docs/reference/**/*.yaml", package["files"])
         self.assertIn("skills/**/*.yaml", package["files"])
@@ -3803,6 +4049,39 @@ class PolicyRuntimeTests(unittest.TestCase):
         self.assertIn("UserPromptSubmit", hooks["hooks"])
         self.assertIn("hooks = true", codex_config)
         self.assertFalse(claude_settings_exists)
+
+    def test_ai_policy_configure_opencode_command_updates_policy_and_config(self) -> None:
+        if shutil.which("node") is None:
+            self.skipTest("node is not available")
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "project"
+            env = {
+                **os.environ,
+                "AI_POLICY_PYTHON": sys.executable,
+            }
+            subprocess.run(
+                [
+                    "node",
+                    "bin/ai-policy.js",
+                    "configure",
+                    "opencode",
+                    "--root",
+                    str(root),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            policy = json.loads(
+                (root / ".policy" / "config.json").read_text(encoding="utf-8")
+            )
+            config = json.loads((root / "opencode.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(policy["enabled"])
+        self.assertEqual(policy["agents"], ["opencode"])
+        self.assertEqual(config["instructions"], ["AGENTS.md"])
 
     def test_ai_policy_embedding_configure_writes_project_config(self) -> None:
         if shutil.which("node") is None:
@@ -4106,7 +4385,7 @@ class PolicyRuntimeTests(unittest.TestCase):
                 clear=True,
             ), patch(
                 "ai_policy_runtime.services.embedding_health.default_embedding_provider",
-                return_value=KeywordConceptEmbeddingProvider(),
+                return_value=FakeEmbeddingProvider(),
             ) as provider:
                 output, exit_code = CommandDispatcher().dispatch(args)
 
@@ -4249,6 +4528,9 @@ class PolicyRuntimeTests(unittest.TestCase):
         env = {
             **os.environ,
             "AI_POLICY_PYTHON": sys.executable,
+            "AI_POLICY_EMBEDDING_PROVIDER": "openai-compatible",
+            "AI_POLICY_EMBEDDING_API_KEY": "test-key",
+            "AI_POLICY_EMBEDDING_MODEL": "test-embedding-model",
         }
         completed = subprocess.run(
             ["node", "bin/ai-policy.js", "doctor"],
@@ -4473,7 +4755,7 @@ class PolicyRuntimeTests(unittest.TestCase):
         fixture = _load_fixture("prompt_quality_eval.yaml")
         analyzer = TaskAnalyzer.from_skills_dir(
             "skills",
-            embeddings=KeywordConceptEmbeddingProvider(),
+            embeddings=FakeEmbeddingProvider(),
         )
         registry = SkillRegistry.from_dirs("skills", "packs")
         renderer = EffectiveRulesRenderer()
@@ -4526,7 +4808,7 @@ class PolicyRuntimeTests(unittest.TestCase):
         fixture = _load_fixture("python_prompt_quality_eval.yaml")
         analyzer = TaskAnalyzer.from_skills_dir(
             "skills",
-            embeddings=KeywordConceptEmbeddingProvider(),
+            embeddings=FakeEmbeddingProvider(),
         )
         registry = SkillRegistry.from_dirs("skills", "packs")
         renderer = EffectiveRulesRenderer()
